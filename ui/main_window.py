@@ -1,0 +1,355 @@
+# ui/main_window.py
+"""
+Tkinter UI Main Window for WoW One-Button Rotation Auto Trigger
+"""
+
+import os
+import threading
+import tkinter as tk
+from time import time
+from tkinter import ttk
+
+import keyboard
+
+from core.input_sender import press_key
+from core.matcher import match_region_with_hash_cache
+from core.profile_manager import ProfileManager, get_icon_dir
+from core.scanner import capture_region
+from ui.region_selector import RegionSelector
+from ui.spell_mapping_dialog import SpellMappingDialog
+
+CLASSES = [
+    "Death Knight",
+    "Demon Hunter",
+    "Druid",
+    "Evoker",
+    "Hunter",
+    "Mage",
+    "Monk",
+    "Paladin",
+    "Priest",
+    "Rogue",
+    "Shaman",
+    "Warlock",
+    "Warrior",
+]
+ALL_SPECS = {
+    "Death Knight": ["Blood", "Frost", "Unholy"],
+    "Demon Hunter": ["Havoc", "Vengeance"],
+    "Druid": ["Balance", "Feral", "Guardian", "Restoration"],
+    "Evoker": ["Devastation", "Preservation", "Augmentation"],
+    "Hunter": ["Beast Mastery", "Marksmanship", "Survival"],
+    "Mage": ["Arcane", "Fire", "Frost"],
+    "Monk": ["Brewmaster", "Mistweaver", "Windwalker"],
+    "Paladin": ["Holy", "Protection", "Retribution"],
+    "Priest": ["Discipline", "Holy", "Shadow"],
+    "Rogue": ["Assassination", "Outlaw", "Subtlety"],
+    "Shaman": ["Elemental", "Enhancement", "Restoration"],
+    "Warlock": ["Affliction", "Demonology", "Destruction"],
+    "Warrior": ["Arms", "Fury", "Protection"],
+}
+
+
+class MainWindow(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        """Main application window and controller.
+
+        Builds the Tkinter UI, manages profile selection and triggers the
+        scanning/matching flow when toggled.
+        """
+        self.title("WoW One-Button Rotation Auto Trigger")
+        self.geometry("360x480")
+        self.resizable(False, False)
+        self.profile_mgr = ProfileManager()
+        self.class_var = tk.StringVar(value=CLASSES[0])
+        self.spec_var = tk.StringVar(value=ALL_SPECS[CLASSES[0]][0])
+        # set up UI
+        self._restoring = True
+        self._build_layout()
+        self._set_class_options()
+        # try to restore last selected class/spec from profile manager
+        last = self.profile_mgr.get_last_selected()
+        if last:
+            cls, spec = last
+            if cls in CLASSES and spec in ALL_SPECS.get(cls, []):
+                self.class_var.set(cls)
+                self._set_spec_options(cls)
+                self.spec_var.set(spec)
+        else:
+            self._set_spec_options(CLASSES[0])
+        # trace spec_var changes to persist last selected (avoids relying on
+        # Combobox events which may not fire for programmatic changes)
+        try:
+            self.spec_var.trace_add("write", self._spec_var_trace)
+        except Exception:
+            # fallback for older tkinter
+            try:
+                self.spec_var.trace("w", self._spec_var_trace)
+            except Exception:
+                pass
+        self._restoring = False
+
+        # Initialize running state
+        self.running = False
+        # hotkey state
+        self._hotkey_handle = None
+        self._hotkey_value = None
+
+        # Bind global hotkey for toggle functionality
+        self.bind_hotkey()
+        # Ensure last selection is saved on app close
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def bind_hotkey(self):
+        # Run global hotkey listener in a daemon thread so UI stays responsive
+        def listen_key():
+            # initial registration uses saved hotkey or default '='
+            hotkey = self.profile_mgr.get_hotkey() or "="
+            try:
+                self._hotkey_handle = keyboard.add_hotkey(
+                    hotkey, lambda: self._on_toggle()
+                )
+                self._hotkey_value = hotkey
+            except Exception:
+                # fallback to '=' if registration fails
+                try:
+                    self._hotkey_handle = keyboard.add_hotkey(
+                        "=", lambda: self._on_toggle()
+                    )
+                    self._hotkey_value = "="
+                except Exception:
+                    self._hotkey_handle = None
+                    self._hotkey_value = "="
+            keyboard.wait()
+
+        threading.Thread(target=listen_key, daemon=True).start()
+
+    def _build_layout(self):
+        """Create and place all widgets used by the main window."""
+        ttk.Label(self, text="Class:").pack(pady=(18, 2))
+        self.class_combo = ttk.Combobox(
+            self, values=CLASSES, textvariable=self.class_var, state="readonly"
+        )
+        self.class_combo.bind("<<ComboboxSelected>>", self._on_class_selected)
+        self.class_combo.pack(pady=2)
+        ttk.Label(self, text="Spec:").pack(pady=(10, 2))
+        self.spec_combo = ttk.Combobox(
+            self, values=[], textvariable=self.spec_var, state="readonly"
+        )
+        # persist spec selection when changed
+        self.spec_combo.bind("<<ComboboxSelected>>", self._on_spec_selected)
+        self.spec_combo.pack(pady=2)
+        ttk.Button(
+            self, text="Configure Region", command=self._on_configure_region
+        ).pack(pady=(18, 8))
+        ttk.Button(
+            self,
+            text="Configure Spell Mapping",
+            command=self._on_configure_spell_mapping,
+        ).pack(pady=(0, 8))
+        ttk.Label(self, text="Logger Output:").pack()
+        # Detection uses the hash matcher (fast, robust)
+        self.log_box = tk.Text(
+            self, height=12, width=36, state="disabled", bg="#f5f5f5"
+        )
+        self.log_box.pack(padx=8, pady=(2, 0))
+        # Hotkey configuration entry
+        frame = ttk.Frame(self)
+        frame.pack(pady=(8, 6))
+        ttk.Label(frame, text="Toggle Hotkey:").pack(side=tk.LEFT, padx=(0, 6))
+        self.hotkey_var = tk.StringVar(value=self.profile_mgr.get_hotkey() or "=")
+        self.hotkey_entry = ttk.Entry(frame, width=6, textvariable=self.hotkey_var)
+        self.hotkey_entry.pack(side=tk.LEFT)
+        ttk.Button(frame, text="Set", command=self._on_set_hotkey).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+
+    def _set_class_options(self):
+        """Populate the class combobox with available classes."""
+        self.class_combo["values"] = CLASSES
+
+    def _set_spec_options(self, class_name):
+        """Update the spec combobox when a class is selected.
+
+        Sets the first spec as the default selection.
+        """
+        specs = ALL_SPECS[class_name]
+        self.spec_combo["values"] = specs
+        self.spec_var.set(specs[0])
+
+    def _on_class_selected(self, event):
+        """Handle class selection change from the UI."""
+        new_class = self.class_var.get()
+        self._set_spec_options(new_class)
+        self._log(f"Selected class: {new_class}")
+
+    def _on_spec_selected(self, event):
+        """Handle spec selection change and persist last selection."""
+        new_spec = self.spec_var.get()
+        self._log(f"Selected spec: {new_spec}")
+        self.profile_mgr.set_last_selected(self.class_var.get(), self.spec_var.get())
+
+    def _spec_var_trace(self, *args):
+        """Trace callback for spec_var changes used to persist last selection.
+
+        This is invoked on both user and programmatic changes; ignore calls
+        while restoring initial state.
+        """
+        if getattr(self, "_restoring", False):
+            return
+        try:
+            self.profile_mgr.set_last_selected(
+                self.class_var.get(), self.spec_var.get()
+            )
+        except Exception:
+            pass
+
+    def _on_configure_region(self):
+        """Open the region selector and save the chosen region."""
+        class_name = self.class_var.get()
+        spec_name = self.spec_var.get()
+        prior = self.profile_mgr.get_region(class_name, spec_name)
+        if prior:
+            prinfo = f"Previous region: x={prior['x']} y={prior['y']} w={prior['width']} h={prior['height']}"
+            self._log(prinfo)
+
+        def on_region_selected(region_tuple):
+            """Callback for RegionSelector; receives (x,y,w,h) or None."""
+            if region_tuple is None:
+                self._log("Region selection cancelled or too small.")
+                return
+            x, y, w, h = region_tuple
+            self._log(f"Selected region: x={x}, y={y}, w={w}, h={h}")
+            region_dict = {"x": x, "y": y, "width": w, "height": h}
+            try:
+                self.profile_mgr.set_region(class_name, spec_name, region_dict)
+                self._log("Region saved.")
+                # save last selected as well
+                try:
+                    self.profile_mgr.set_last_selected(class_name, spec_name)
+                except Exception:
+                    pass
+            except Exception as ex:
+                self._log("Error saving region: " + str(ex))
+
+        RegionSelector(self, on_region_selected)
+
+    def _on_configure_spell_mapping(self):
+        """Open the spell mapping dialog for the selected profile."""
+        class_name = self.class_var.get()
+        spec_name = self.spec_var.get()
+        icon_dir = get_icon_dir(class_name, spec_name)
+        icon_dir = os.path.abspath(icon_dir)
+        prev = self.profile_mgr.get_spell_mapping(class_name, spec_name)
+
+        def on_save(mapping):
+            """Callback invoked by SpellMappingDialog when Save is pressed."""
+            self.profile_mgr.set_spell_mapping(class_name, spec_name, mapping)
+            self._log(
+                f"Spell mapping saved for {class_name} {spec_name} ({len(mapping)} spells)."
+            )
+            # persist last selected on save as well
+            try:
+                self.profile_mgr.set_last_selected(class_name, spec_name)
+            except Exception:
+                pass
+
+        SpellMappingDialog(self, icon_dir, prev, on_save)
+
+    def _on_set_hotkey(self):
+        """Set and register a new global hotkey from the UI entry."""
+        new_key = self.hotkey_var.get().strip()
+        if not new_key:
+            self._log("Hotkey cannot be empty.")
+            return
+        try:
+            # unregister previous
+            try:
+                if self._hotkey_handle:
+                    keyboard.remove_hotkey(self._hotkey_handle)
+            except Exception:
+                pass
+            # register new
+            self._hotkey_handle = keyboard.add_hotkey(
+                new_key, lambda: self._on_toggle()
+            )
+            self._hotkey_value = new_key
+            self.profile_mgr.set_hotkey(new_key)
+            self._log(f"Hotkey set to: {new_key}")
+        except Exception as e:
+            self._log(f"Failed to set hotkey: {e}")
+
+    def _on_toggle(self):
+        """Capture region, run matcher and send input if a mapped spell is found."""
+        self._log("Action triggered. Capturing region and detecting spell.")
+
+        class_name = self.class_var.get()
+        spec_name = self.spec_var.get()
+        region = self.profile_mgr.get_region(class_name, spec_name)
+        mapping = self.profile_mgr.get_spell_mapping(class_name, spec_name)
+
+        if not region:
+            self._log("Region not configured. Please configure the region first.")
+            return
+
+        if not mapping:
+            self._log("Spell mapping not configured. Please map your spells first.")
+            return
+
+        try:
+            # Initialize icon_dir
+            icon_dir = get_icon_dir(class_name, spec_name)
+
+            # Capture the region
+            img = capture_region(region)
+
+            # Perform and benchmark cached matching
+            start_time = time()
+            detected_spell, score = match_region_with_hash_cache(img, icon_dir)
+            label = "[Hash Matching]"
+            elapsed_time = time() - start_time
+
+            self._log(
+                f"{label} {elapsed_time:.4f}s || Detected Spell: {detected_spell} (score={score:.3f})"
+            )
+
+            # Check if the spell maps to a key
+            if detected_spell in mapping:
+                key = mapping[detected_spell]
+                press_key(key)
+                self._log(f"Detected spell: {detected_spell}. Pressed key: {key}")
+            else:
+                self._log(
+                    f"Spell {detected_spell} not found in mapping. No key pressed."
+                )
+        except Exception as e:
+            self._log(f"Error: {str(e)}")
+
+    def _on_close(self):
+        """Save last selected class/spec and close the application."""
+        try:
+            self.profile_mgr.set_last_selected(
+                self.class_var.get(), self.spec_var.get()
+            )
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            try:
+                self.quit()
+            except Exception:
+                pass
+
+    def _log(self, msg):
+        """Append a line to the UI log textbox (thread-safe enough for this app)."""
+        self.log_box.config(state=tk.NORMAL)
+        self.log_box.insert(tk.END, f"{msg}\n")
+        self.log_box.config(state=tk.DISABLED)
+        self.log_box.see(tk.END)
+
+
+if __name__ == "__main__":
+    app = MainWindow()
+    app.mainloop()

@@ -1,0 +1,15 @@
+[project]
+name = "one-button-rotation-auto-trigger"
+version = "0.1.0"
+description = "One button rotation auto trigger"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "keyboard",
+    "mss",
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "pydirectinput",
+    "imagehash",
+]
