@@ -91,16 +91,32 @@ Configuration — UI workflow
 
 Trigger key format
 ------------------
-You can write common key names or modifier combinations in the mapping UI.
-Examples that work in the app's UI:
+The mapping UI accepts simple keys, modifier combinations and mixed
+keyboard+mouse combos. Tokens are case- and spacing-tolerant and are joined
+with `+`. The app normalizes common synonyms (for example `control` → `ctrl`,
+`scrollup` → `wheel_up`).
+
+Examples:
 
 - `1` — numeric key 1
 - `space` — the space bar
-- `ctrl + a` or `ctrl+a` — a Ctrl modifier with the `a` key
+- `ctrl+a` or `ctrl + a` — Ctrl + A
+- `ctrl+wheel_up` or `ctrl+scrollup` — hold Ctrl and scroll up (mapped to a
+  fixed 5 notches)
+- `alt+mouse4` or `side1` — hold Alt and press the first extra mouse button
 
-The value you enter is passed to the input sender (using `pydirectinput`).
-Use simple names (`space`, `tab`, `enter`) or modifier combinations. If you
-need an unusual key name, test it in the app first.
+Supported mouse tokens (use these names in mappings): `wheel_up`,
+`wheel_down`, `left_click`, `right_click`, `middle_click`, `mouse_down`,
+`mouse_up`, `mouse4`, `mouse5`, `xbutton1`, `xbutton2`, `side1`, `side2`.
+
+Notes:
+- Wheel amount: the scanner uses a fixed 5-notch scroll for `wheel_up`/
+  `wheel_down`.
+- Modifier keys (Ctrl/Alt/Shift/Win) are sent with `pydirectinput`.
+- Mouse/wheel/extra-button events are synthesized via the OS (Win32) so they
+  reliably pair with the on-screen mouse actions.
+- The value you enter is forwarded to `core.input_sender.press_key()`; test
+  unusual combos in the app if unsure.
 
 Configuration file
 ------------------
