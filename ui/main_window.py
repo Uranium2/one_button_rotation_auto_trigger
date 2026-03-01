@@ -6,12 +6,18 @@ Tkinter UI Main Window for WoW One-Button Rotation Auto Trigger
 import os
 import threading
 import tkinter as tk
-from time import time
+import time
 from tkinter import ttk
 
-import keyboard
+try:
+    import keyboard
 
-from core.input_sender import press_key
+    KEYBOARD_AVAILABLE = True
+except Exception:
+    keyboard = None
+    KEYBOARD_AVAILABLE = False
+
+from core.input_sender import press_key, emergency_release_modifiers
 from core.matcher import match_region_with_hash_cache
 from core.profile_manager import ProfileManager, get_icon_dir
 from core.scanner import capture_region
@@ -49,6 +55,14 @@ ALL_SPECS = {
     "Warrior": ["Arms", "Fury", "Protection"],
 }
 
+# Application defaults / constants
+DEFAULT_HOTKEY = "="
+DEFAULT_LOOP_HOTKEY = "/"
+EMERGENCY_HOTKEY = "esc"
+DEFAULT_LOOP_INTERVAL = 0.05
+LOOP_INDICATOR_ON = "Loop: On"
+LOOP_INDICATOR_OFF = "Loop: Off"
+
 
 class MainWindow(tk.Tk):
     def __init__(self):
@@ -64,6 +78,14 @@ class MainWindow(tk.Tk):
         self.profile_mgr = ProfileManager()
         self.class_var = tk.StringVar(value=CLASSES[0])
         self.spec_var = tk.StringVar(value=ALL_SPECS[CLASSES[0]][0])
+        # initial runtime settings required by the layout
+        self.loop_interval = 0.05
+        # attempt to restore persisted loop interval (ProfileManager may override below)
+        try:
+            stored = None
+            # profile_mgr is set next; guard in case _build_layout uses it
+        except Exception:
+            pass
         # set up UI
         self._restoring = True
         self._build_layout()
@@ -95,6 +117,21 @@ class MainWindow(tk.Tk):
         # hotkey state
         self._hotkey_handle = None
         self._hotkey_value = None
+        # loop hotkey state
+        self._loop_hotkey_handle = None
+        self._loop_hotkey_value = None
+        # emergency kill hotkey handle
+        self._kill_hotkey_handle = None
+        self._loop_running = False
+        # loop interval (seconds)
+        self.loop_interval = 0.05
+        # try restore persisted loop interval
+        stored = self.profile_mgr.get_loop_interval()
+        if stored is not None:
+            try:
+                self.loop_interval = float(stored)
+            except Exception:
+                pass
 
         # Bind global hotkey for toggle functionality
         self.bind_hotkey()
@@ -105,7 +142,7 @@ class MainWindow(tk.Tk):
         # Run global hotkey listener in a daemon thread so UI stays responsive
         def listen_key():
             # initial registration uses saved hotkey or default '='
-            hotkey = self.profile_mgr.get_hotkey() or "="
+            hotkey = self.profile_mgr.get_hotkey() or DEFAULT_HOTKEY
             try:
                 self._hotkey_handle = keyboard.add_hotkey(
                     hotkey, lambda: self._on_toggle()
@@ -115,12 +152,31 @@ class MainWindow(tk.Tk):
                 # fallback to '=' if registration fails
                 try:
                     self._hotkey_handle = keyboard.add_hotkey(
-                        "=", lambda: self._on_toggle()
+                        DEFAULT_HOTKEY, lambda: self._on_toggle()
                     )
-                    self._hotkey_value = "="
+                    self._hotkey_value = DEFAULT_HOTKEY
                 except Exception:
                     self._hotkey_handle = None
-                    self._hotkey_value = "="
+                    self._hotkey_value = DEFAULT_HOTKEY
+            # also register loop hotkey (saved or default '/')
+            try:
+                loop_key = self.profile_mgr.get_loop_hotkey() or DEFAULT_LOOP_HOTKEY
+                self._loop_hotkey_handle = keyboard.add_hotkey(
+                    loop_key, lambda: self._on_toggle_loop()
+                )
+                self._loop_hotkey_value = loop_key
+            except Exception:
+                # ignore loop hotkey registration errors silently here
+                self._loop_hotkey_handle = None
+                self._loop_hotkey_value = "/"
+            # register emergency stop hotkey (Escape) to immediately stop loop
+            try:
+                self._kill_hotkey_handle = keyboard.add_hotkey(
+                    EMERGENCY_HOTKEY, lambda: self._on_emergency_stop()
+                )
+            except Exception:
+                self._kill_hotkey_handle = None
+
             keyboard.wait()
 
         threading.Thread(target=listen_key, daemon=True).start()
@@ -158,12 +214,51 @@ class MainWindow(tk.Tk):
         frame = ttk.Frame(self)
         frame.pack(pady=(8, 6))
         ttk.Label(frame, text="Toggle Hotkey:").pack(side=tk.LEFT, padx=(0, 6))
-        self.hotkey_var = tk.StringVar(value=self.profile_mgr.get_hotkey() or "=")
+        self.hotkey_var = tk.StringVar(
+            value=self.profile_mgr.get_hotkey() or DEFAULT_HOTKEY
+        )
         self.hotkey_entry = ttk.Entry(frame, width=6, textvariable=self.hotkey_var)
         self.hotkey_entry.pack(side=tk.LEFT)
         ttk.Button(frame, text="Set", command=self._on_set_hotkey).pack(
             side=tk.LEFT, padx=(6, 0)
         )
+        # Loop-mode hotkey configuration
+        ttk.Label(frame, text=" Loop Hotkey:").pack(side=tk.LEFT, padx=(10, 6))
+        self.loop_hotkey_var = tk.StringVar(
+            value=self.profile_mgr.get_loop_hotkey() or "/"
+        )
+        self.loop_hotkey_entry = ttk.Entry(
+            frame, width=6, textvariable=self.loop_hotkey_var
+        )
+        self.loop_hotkey_entry.pack(side=tk.LEFT)
+        ttk.Button(frame, text="Set", command=self._on_set_loop_hotkey).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        # Loop interval control
+        ttk.Label(frame, text=" Interval:").pack(side=tk.LEFT, padx=(8, 6))
+        # guard access in case attribute isn't set on the Tk instance
+        self.loop_interval_var = tk.StringVar(
+            value=f"{getattr(self, 'loop_interval', 0.05):.2f}"
+        )
+        self.loop_interval_entry = ttk.Entry(
+            frame, width=6, textvariable=self.loop_interval_var
+        )
+        self.loop_interval_entry.pack(side=tk.LEFT)
+        ttk.Button(frame, text="Set", command=self._on_set_loop_interval).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+
+        # Loop running indicator
+        self.loop_indicator_var = tk.StringVar(value="Loop: Off")
+        self.loop_indicator_label = ttk.Label(
+            self, textvariable=self.loop_indicator_var, foreground="#006400"
+        )
+        self.loop_indicator_label.pack(pady=(6, 0))
+
+        # Emergency stop button (visible clickable control)
+        ttk.Button(
+            self, text="Emergency Stop (Esc)", command=self._on_emergency_stop
+        ).pack(pady=(6, 0))
 
     def _set_class_options(self):
         """Populate the class combobox with available classes."""
@@ -266,8 +361,8 @@ class MainWindow(tk.Tk):
         try:
             # unregister previous
             try:
-                if self._hotkey_handle:
-                    keyboard.remove_hotkey(self._hotkey_handle)
+                if getattr(self, "_hotkey_value", None) is not None:
+                    keyboard.remove_hotkey(self._hotkey_value)
             except Exception:
                 pass
             # register new
@@ -279,6 +374,45 @@ class MainWindow(tk.Tk):
             self._log(f"Hotkey set to: {new_key}")
         except Exception as e:
             self._log(f"Failed to set hotkey: {e}")
+
+    def _on_set_loop_hotkey(self):
+        """Set and register a new global loop-mode hotkey from the UI entry."""
+        new_key = self.loop_hotkey_var.get().strip()
+        if not new_key:
+            self._log("Loop hotkey cannot be empty.")
+            return
+        try:
+            # unregister previous loop hotkey if present
+            try:
+                if getattr(self, "_loop_hotkey_value", None) is not None:
+                    keyboard.remove_hotkey(self._loop_hotkey_value)
+            except Exception:
+                pass
+            # register new
+            self._loop_hotkey_handle = keyboard.add_hotkey(
+                new_key, lambda: self._on_toggle_loop()
+            )
+            self._loop_hotkey_value = new_key
+            self.profile_mgr.set_loop_hotkey(new_key)
+            self._log(f"Loop hotkey set to: {new_key}")
+        except Exception as e:
+            self._log(f"Failed to set loop hotkey: {e}")
+
+    def _on_set_loop_interval(self):
+        """Set the loop interval from the UI entry."""
+        val = self.loop_interval_var.get().strip()
+        try:
+            f = float(val)
+            if f <= 0:
+                raise ValueError("Interval must be positive")
+            self.loop_interval = f
+            try:
+                self.profile_mgr.set_loop_interval(self.loop_interval)
+            except Exception:
+                pass
+            self._log(f"Loop interval set to {self.loop_interval:.3f}s")
+        except Exception as e:
+            self._log(f"Invalid interval: {e}")
 
     def _on_toggle(self):
         """Capture region, run matcher and send input if a mapped spell is found."""
@@ -305,10 +439,10 @@ class MainWindow(tk.Tk):
             img = capture_region(region)
 
             # Perform and benchmark cached matching
-            start_time = time()
+            start_time = time.time()
             detected_spell, score = match_region_with_hash_cache(img, icon_dir)
             label = "[Hash Matching]"
-            elapsed_time = time() - start_time
+            elapsed_time = time.time() - start_time
 
             self._log(
                 f"{label} {elapsed_time:.4f}s || Detected Spell: {detected_spell} (score={score:.3f})"
@@ -326,6 +460,63 @@ class MainWindow(tk.Tk):
         except Exception as e:
             self._log(f"Error: {str(e)}")
 
+    def _on_toggle_loop(self):
+        """Start/stop looped triggering: repeatedly capture/detect/send until toggled off."""
+        # Use a background thread for the loop so the UI stays responsive.
+        if getattr(self, "_loop_running", False):
+            # stop loop
+            self._loop_running = False
+            self._log("Loop mode stopped.")
+            return
+
+        # start loop
+        self._loop_running = True
+        self.loop_indicator_var.set("Loop: On")
+
+        def loop_worker():
+            self._log("Loop mode started.")
+            class_name = self.class_var.get()
+            spec_name = self.spec_var.get()
+            region = self.profile_mgr.get_region(class_name, spec_name)
+            mapping = self.profile_mgr.get_spell_mapping(class_name, spec_name)
+
+            if not region:
+                self._log("Region not configured. Please configure the region first.")
+                self._loop_running = False
+                return
+
+            if not mapping:
+                self._log("Spell mapping not configured. Please map your spells first.")
+                self._loop_running = False
+                return
+
+            try:
+                while self._loop_running:
+                    img = capture_region(region)
+                    detected_spell, score = match_region_with_hash_cache(
+                        img, get_icon_dir(class_name, spec_name)
+                    )
+                    if detected_spell in mapping:
+                        key = mapping[detected_spell]
+                        press_key(key)
+                        self._log(
+                            f"Loop: Detected {detected_spell} -> pressed {key} (score={score:.3f})"
+                        )
+                    else:
+                        self._log(
+                            f"Loop: Detected {detected_spell} not mapped (score={score:.3f})"
+                        )
+                    # respect user-configured loop interval at runtime
+                    time.sleep(self.loop_interval)
+            except Exception as e:
+                self._log(f"Loop error: {str(e)}")
+            finally:
+                self._loop_running = False
+                self.loop_indicator_var.set("Loop: Off")
+                self._log("Loop mode ended.")
+
+        threading.Thread(target=loop_worker, daemon=True).start()
+
     def _on_close(self):
         """Save last selected class/spec and close the application."""
         try:
@@ -341,6 +532,28 @@ class MainWindow(tk.Tk):
                 self.quit()
             except Exception:
                 pass
+
+    def _on_emergency_stop(self):
+        """Immediate stop handler: stops loop and releases modifiers.
+
+        Bound to the Escape key and the Emergency Stop button in the UI.
+        """
+        if getattr(self, "_loop_running", False):
+            self._loop_running = False
+            # best-effort release modifiers so no key remains stuck
+            try:
+                emergency_release_modifiers()
+            except Exception as ex:
+                self._log(f"Emergency release failed: {ex}")
+            self.loop_indicator_var.set("Loop: Off")
+            self._log("Emergency stop pressed: loop halted and modifiers released.")
+        else:
+            # still attempt cleanup even if loop not running
+            try:
+                emergency_release_modifiers()
+                self._log("Emergency release invoked (no loop running).")
+            except Exception as ex:
+                self._log(f"Emergency release failed: {ex}")
 
     def _log(self, msg):
         """Append a line to the UI log textbox (thread-safe enough for this app)."""

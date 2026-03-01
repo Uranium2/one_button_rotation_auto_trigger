@@ -5,7 +5,10 @@ InputSender: Handles key press simulation.
 
 import time
 import ctypes
+import logging
 import pydirectinput
+
+logger = logging.getLogger(__name__)
 
 
 def press_key(key: str) -> None:
@@ -89,8 +92,9 @@ def press_key(key: str) -> None:
 
     mouse_tokens = []
     key_tokens = []
+    modifier_tokens = []
 
-    print(f"Pressing: {key} -> tokens: {token_list}")
+    logger.debug("Pressing: %s -> tokens: %s", key, token_list)
 
     for tok in token_list:
         # ignore any amount suffix like wheel_up:3 — always use fixed amount
@@ -181,3 +185,18 @@ def press_key(key: str) -> None:
         for m in reversed(modifier_tokens):
             pydirectinput.keyUp(m)
             time.sleep(0.01)
+
+
+def emergency_release_modifiers() -> None:
+    """Release common modifier keys to ensure no modifier remains stuck.
+
+    This is intended as an emergency cleanup callable from the UI or a
+    global hotkey handler when the loop needs to be stopped immediately.
+    """
+    MODIFIERS = ["ctrl", "shift", "alt", "win"]
+    for m in MODIFIERS:
+        try:
+            pydirectinput.keyUp(m)
+        except Exception:
+            # Best-effort release; log and continue
+            logger.debug("Failed to release modifier: %s", m)

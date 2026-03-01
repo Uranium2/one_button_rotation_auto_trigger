@@ -153,6 +153,42 @@ class ProfileManager:
         self._profiles["_meta"] = meta
         self._save()
 
+    def get_loop_hotkey(self):
+        """Return the configured loop-mode hotkey (string) or None."""
+        meta = self._profiles.get("_meta")
+        if isinstance(meta, dict):
+            return meta.get("loop_hotkey")
+        return None
+
+    def set_loop_hotkey(self, hotkey: str):
+        """Persist the configured loop-mode hotkey under '_meta'."""
+        meta = self._profiles.get("_meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["loop_hotkey"] = hotkey
+        self._profiles["_meta"] = meta
+        self._save()
+
+    def get_loop_interval(self):
+        """Return the stored loop interval in seconds (float) or None."""
+        meta = self._profiles.get("_meta")
+        if isinstance(meta, dict):
+            val = meta.get("loop_interval")
+            try:
+                return float(val) if val is not None else None
+            except Exception:
+                return None
+        return None
+
+    def set_loop_interval(self, interval: float):
+        """Persist the loop interval (seconds) under '_meta'."""
+        meta = self._profiles.get("_meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["loop_interval"] = float(interval)
+        self._profiles["_meta"] = meta
+        self._save()
+
 
 def get_icon_dir(class_name: str, spec_name: str) -> str:
     """Return the absolute path to the icon directory for the class/spec."""
