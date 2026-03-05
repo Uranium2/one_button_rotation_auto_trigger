@@ -57,7 +57,7 @@ ALL_SPECS = {
 
 # Application defaults / constants
 DEFAULT_HOTKEY = "="
-DEFAULT_LOOP_HOTKEY = "/"
+DEFAULT_LOOP_HOTKEY = "."
 EMERGENCY_HOTKEY = "esc"
 DEFAULT_LOOP_INTERVAL = 0.05
 LOOP_INDICATOR_ON = "Loop: On"
@@ -168,7 +168,7 @@ class MainWindow(tk.Tk):
             except Exception:
                 # ignore loop hotkey registration errors silently here
                 self._loop_hotkey_handle = None
-                self._loop_hotkey_value = "/"
+                self._loop_hotkey_value = "."
             # register emergency stop hotkey (Escape) to immediately stop loop
             try:
                 self._kill_hotkey_handle = keyboard.add_hotkey(
@@ -183,19 +183,26 @@ class MainWindow(tk.Tk):
 
     def _build_layout(self):
         """Create and place all widgets used by the main window."""
-        ttk.Label(self, text="Class:").pack(pady=(18, 2))
+        # Class and Spec on one line
+        cs_frame = ttk.Frame(self)
+        cs_frame.pack(pady=(18, 6), fill=tk.X)
+        ttk.Label(cs_frame, text="Class:").pack(side=tk.LEFT, padx=(0, 6))
         self.class_combo = ttk.Combobox(
-            self, values=CLASSES, textvariable=self.class_var, state="readonly"
+            cs_frame,
+            values=CLASSES,
+            textvariable=self.class_var,
+            state="readonly",
+            width=15,
         )
         self.class_combo.bind("<<ComboboxSelected>>", self._on_class_selected)
-        self.class_combo.pack(pady=2)
-        ttk.Label(self, text="Spec:").pack(pady=(10, 2))
+        self.class_combo.pack(side=tk.LEFT)
+        ttk.Label(cs_frame, text="Spec:").pack(side=tk.LEFT, padx=(12, 6))
         self.spec_combo = ttk.Combobox(
-            self, values=[], textvariable=self.spec_var, state="readonly"
+            cs_frame, values=[], textvariable=self.spec_var, state="readonly", width=15
         )
         # persist spec selection when changed
         self.spec_combo.bind("<<ComboboxSelected>>", self._on_spec_selected)
-        self.spec_combo.pack(pady=2)
+        self.spec_combo.pack(side=tk.LEFT)
         ttk.Button(
             self, text="Configure Region", command=self._on_configure_region
         ).pack(pady=(18, 8))
@@ -206,45 +213,50 @@ class MainWindow(tk.Tk):
         ).pack(pady=(0, 8))
         ttk.Label(self, text="Logger Output:").pack()
         # Detection uses the hash matcher (fast, robust)
-        self.log_box = tk.Text(
-            self, height=12, width=36, state="disabled", bg="#f5f5f5"
-        )
+        # Make the logger smaller so the main window can fit controls
+        self.log_box = tk.Text(self, height=10, width=36, state="disabled", bg="#f5f5f5")
         self.log_box.pack(padx=8, pady=(2, 0))
-        # Hotkey configuration entry
-        frame = ttk.Frame(self)
-        frame.pack(pady=(8, 6))
-        ttk.Label(frame, text="Toggle Hotkey:").pack(side=tk.LEFT, padx=(0, 6))
+        # Hotkey configuration entry (toggle hotkey on its own row)
+        top_frame = ttk.Frame(self)
+        top_frame.pack(pady=(8, 6), fill=tk.X)
+        ttk.Label(top_frame, text="Toggle Hotkey:").pack(side=tk.LEFT, padx=(0, 6))
         self.hotkey_var = tk.StringVar(
             value=self.profile_mgr.get_hotkey() or DEFAULT_HOTKEY
         )
-        self.hotkey_entry = ttk.Entry(frame, width=6, textvariable=self.hotkey_var)
+        self.hotkey_entry = ttk.Entry(top_frame, width=6, textvariable=self.hotkey_var)
         self.hotkey_entry.pack(side=tk.LEFT)
-        ttk.Button(frame, text="Set", command=self._on_set_hotkey).pack(
+        ttk.Button(top_frame, text="Set", command=self._on_set_hotkey).pack(
             side=tk.LEFT, padx=(6, 0)
         )
-        # Loop-mode hotkey configuration
-        ttk.Label(frame, text=" Loop Hotkey:").pack(side=tk.LEFT, padx=(10, 6))
+
+        # Loop hotkey on its own row
+        loop_frame = ttk.Frame(self)
+        loop_frame.pack(pady=(4, 4), fill=tk.X)
+        ttk.Label(loop_frame, text="Loop Hotkey:").pack(side=tk.LEFT, padx=(0, 6))
         self.loop_hotkey_var = tk.StringVar(
-            value=self.profile_mgr.get_loop_hotkey() or "/"
+            value=self.profile_mgr.get_loop_hotkey() or DEFAULT_LOOP_HOTKEY
         )
         self.loop_hotkey_entry = ttk.Entry(
-            frame, width=6, textvariable=self.loop_hotkey_var
+            loop_frame, width=6, textvariable=self.loop_hotkey_var
         )
         self.loop_hotkey_entry.pack(side=tk.LEFT)
-        ttk.Button(frame, text="Set", command=self._on_set_loop_hotkey).pack(
-            side=tk.LEFT, padx=(6, 0)
+        ttk.Button(loop_frame, text="Set", command=self._on_set_loop_hotkey).pack(
+            side=tk.LEFT, padx=(6, 8)
         )
-        # Loop interval control
-        ttk.Label(frame, text=" Interval:").pack(side=tk.LEFT, padx=(8, 6))
+
+        # Interval on its own row
+        interval_frame = ttk.Frame(self)
+        interval_frame.pack(pady=(2, 6), fill=tk.X)
+        ttk.Label(interval_frame, text="Interval (s):").pack(side=tk.LEFT, padx=(0, 6))
         # guard access in case attribute isn't set on the Tk instance
         self.loop_interval_var = tk.StringVar(
-            value=f"{getattr(self, 'loop_interval', 0.05):.2f}"
+            value=f"{getattr(self, 'loop_interval', DEFAULT_LOOP_INTERVAL):.2f}"
         )
         self.loop_interval_entry = ttk.Entry(
-            frame, width=6, textvariable=self.loop_interval_var
+            interval_frame, width=6, textvariable=self.loop_interval_var
         )
         self.loop_interval_entry.pack(side=tk.LEFT)
-        ttk.Button(frame, text="Set", command=self._on_set_loop_interval).pack(
+        ttk.Button(interval_frame, text="Set", command=self._on_set_loop_interval).pack(
             side=tk.LEFT, padx=(6, 0)
         )
 

@@ -117,9 +117,28 @@ def press_key(key: str) -> None:
             pydirectinput.press(key_tokens[0])
             return
 
-        # if there are only keyboard tokens, use hotkey which handles modifiers
+        # if there are only keyboard tokens, send them with pydirectinput
+        # Note: some pydirectinput builds don't expose a `hotkey` helper, so
+        # implement a simple, reliable sequence here: hold modifiers, press
+        # non-modifier keys, then release modifiers.
         if mouse_tokens == [] and len(key_tokens) >= 1:
-            pydirectinput.hotkey(*key_tokens)
+            MODIFIERS = {"ctrl", "alt", "shift", "win"}
+            modifier_tokens = [k for k in key_tokens if k in MODIFIERS]
+            normal_key_tokens = [k for k in key_tokens if k not in MODIFIERS]
+
+            for m in modifier_tokens:
+                pydirectinput.keyDown(m)
+                time.sleep(0.02)
+
+            # press non-modifier keys sequentially
+            for nk in normal_key_tokens:
+                pydirectinput.press(nk)
+                time.sleep(0.02)
+
+            # release modifiers
+            for m in reversed(modifier_tokens):
+                pydirectinput.keyUp(m)
+                time.sleep(0.01)
             return
 
         # For mixed keyboard + mouse actions:
