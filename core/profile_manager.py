@@ -191,14 +191,38 @@ class ProfileManager:
 
 
 def get_icon_dir(class_name: str, spec_name: str) -> str:
-    """Return the absolute path to the icon directory for the class/spec."""
-    return os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
-            "icons",
-            class_name.lower().replace(" ", "_"),
-            spec_name.lower().replace(" ", "_"),
-        )
+    """Return the absolute path to the icon directory to use for matching.
+
+    New behavior: prefer a shared `all` folder under the class directory
+    (data/icons/<class>/all) when it exists and contains images. This lets
+    scrapers that write consolidated icons to `all` be used without changing
+    the per-spec profile mappings. If the `all` folder is not present or
+    empty, fall back to the original per-spec folder.
+    """
+    base = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "data", "icons")
     )
+    # global "all" directory (data/icons/all)
+    global_all = os.path.join(base, "all")
+    # class-specific all directory (data/icons/<class>/all)
+    class_dir = os.path.join(base, class_name.lower().replace(" ", "_"))
+    class_all = os.path.join(class_dir, "all")
+    spec_dir = os.path.join(class_dir, spec_name.lower().replace(" ", "_"))
+
+    # helper to check directory contains image files
+    def _has_images(d):
+        try:
+            if os.path.isdir(d):
+                for fn in os.listdir(d):
+                    if fn.lower().endswith((".png", ".jpg", ".jpeg")):
+                        return True
+        except Exception:
+            return False
+        return False
+
+    # Prefer global all, then class-specific all, then spec dir
+    if _has_images(global_all):
+        return os.path.abspath(global_all)
+    if _has_images(class_all):
+        return os.path.abspath(class_all)
+    return os.path.abspath(spec_dir)

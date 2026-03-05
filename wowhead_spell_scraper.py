@@ -20,20 +20,38 @@ ALL_CLASSES_SPECS = {
 }
 
 
-def scrape_icon_urls(wow_class, spec, driver, output_dir):
-    class_out = wow_class.replace("-", "_")
-    spec_out = spec.replace("-", "_")
-    page_url = f"https://www.wowhead.com/talent-calc/{wow_class}/{spec}"
-    icon_outfile = f"{output_dir}/{class_out}_{spec_out}_spell_icon_urls.txt"
-    debug_html_outfile = f"{output_dir}/{class_out}_{spec_out}_debug.html"
-    driver.get(page_url)
-    print(f"Scraping {page_url}")
+def scrape_icon_urls(wow_class, driver, output_dir):
+    """Scrape icon URLs for a class by visiting Wowhead talents and abilities pages.
 
-    html = driver.execute_script(
-        "return document.getElementsByTagName('html')[0].innerHTML"
-    )
-    # with open(debug_html_outfile, "w", encoding="utf-8") as f:
-    #     f.write(html)
+    This visits both:
+      - https://www.wowhead.com/spells/talents/<class>
+      - https://www.wowhead.com/spells/abilities/<class>
+
+    and aggregates any found icon image URLs into a single output file named
+    <output_dir>/<class>_spell_icon_urls.txt
+    """
+    class_out = wow_class.replace("-", "_")
+    page_urls = [
+        f"https://www.wowhead.com/spells/talents/{wow_class}",
+        f"https://www.wowhead.com/spells/abilities/{wow_class}",
+    ]
+    icon_outfile = f"{output_dir}/{class_out}_spell_icon_urls.txt"
+    debug_html_outfile = f"{output_dir}/{class_out}_debug.html"
+
+    html_parts = []
+    for page_url in page_urls:
+        try:
+            driver.get(page_url)
+            print(f"Scraping {page_url}")
+            html = driver.execute_script(
+                "return document.getElementsByTagName('html')[0].innerHTML"
+            )
+            html_parts.append(html)
+        except Exception as ex:
+            print(f"Failed to fetch {page_url}: {ex}")
+    html = "\n".join(html_parts)
+    with open(debug_html_outfile, "w", encoding="utf-8") as f:
+        f.write(html)
 
     prefixes = ["spell", "ability", "inv"]
     urls = set()
@@ -53,12 +71,19 @@ def scrape_icon_urls(wow_class, spec, driver, output_dir):
     )
 
 
-def download_icon_images_from_txt(
-    wow_class, spec, txt_dir="data", out_root="data/icons"
-):
+def download_icon_images_from_txt(wow_class, txt_dir="data", out_root="data/icons"):
+    """Download icons listed in the scraped text file for a class.
+
+    Icons are saved to <out_root>/<class>/all/ by default to avoid depending on
+    spec structure.
+    """
     class_out = wow_class.replace("-", "_")
-    spec_out = spec.replace("-", "_")
+    spec_out = "all"
     txt_file = f"{txt_dir}/{class_out}_{spec_out}_spell_icon_urls.txt"
+    # fallback: if the combined file wasn't written with _all suffix, try the
+    # legacy <class>_spell_icon_urls.txt name
+    if not os.path.isfile(txt_file):
+        txt_file = f"{txt_dir}/{class_out}_spell_icon_urls.txt"
     target_dir = f"{out_root}/{class_out}/{spec_out}"
     os.makedirs(target_dir, exist_ok=True)
     if not os.path.isfile(txt_file):
@@ -66,7 +91,7 @@ def download_icon_images_from_txt(
         return
     with open(txt_file, "r", encoding="utf-8") as f:
         urls = [line.strip() for line in f if line.strip()]
-    print(f"Downloading {len(urls)} icons for {wow_class}/{spec} ...")
+    print(f"Downloading {len(urls)} icons for {wow_class}/{spec_out} ...")
     for i, url in enumerate(urls, 1):
         filename = os.path.basename(url.split("?")[0])  # ignore URL params if present
         outfile = os.path.join(target_dir, filename)
@@ -88,21 +113,19 @@ def main():
     output_dir = "data"
     os.makedirs(output_dir, exist_ok=True)
     driver = webdriver.Chrome()
-    for wow_class, specs in ALL_CLASSES_SPECS.items():
-        for spec in specs:
-            try:
-                scrape_icon_urls(wow_class, spec, driver, output_dir)
-            except Exception as e:
-                print(f"Failed for {wow_class}/{spec}: {e}")
+    for wow_class in ALL_CLASSES_SPECS.keys():
+        try:
+            scrape_icon_urls(wow_class, driver, output_dir)
+        except Exception as e:
+            print(f"Failed for {wow_class}: {e}")
     driver.quit()
 
     # Now, download for all
-    for wow_class, specs in ALL_CLASSES_SPECS.items():
-        for spec in specs:
-            try:
-                download_icon_images_from_txt(wow_class, spec)
-            except Exception as e:
-                print(f"(Download fail) {wow_class}/{spec}: {e}")
+    for wow_class in ALL_CLASSES_SPECS.keys():
+        try:
+            download_icon_images_from_txt(wow_class)
+        except Exception as e:
+            print(f"(Download fail) {wow_class}: {e}")
 
 
 if __name__ == "__main__":

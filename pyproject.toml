@@ -12,4 +12,7 @@ dependencies = [
     "pillow",
     "pydirectinput",
     "imagehash",
+    "selenium",
+    "beautifulsoup4",
+    "requests",
 ]
