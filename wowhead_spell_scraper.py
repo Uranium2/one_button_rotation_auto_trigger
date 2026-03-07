@@ -53,7 +53,7 @@ def scrape_icon_urls(wow_class, driver, output_dir):
     with open(debug_html_outfile, "w", encoding="utf-8") as f:
         f.write(html)
 
-    prefixes = ["spell", "ability", "inv"]
+    prefixes = ["spell", "ability", "inv", wow_class]
     urls = set()
     for prefix in prefixes:
         pat = rf'https://wow.zamimg.com/images/wow/icons/(small|medium|large)/{prefix}[^"\s>&)]*?\.jpg'

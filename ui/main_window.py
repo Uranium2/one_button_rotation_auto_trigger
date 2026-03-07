@@ -8,6 +8,7 @@ import threading
 import tkinter as tk
 import time
 from tkinter import ttk
+import traceback
 
 try:
     import keyboard
@@ -214,7 +215,9 @@ class MainWindow(tk.Tk):
         ttk.Label(self, text="Logger Output:").pack()
         # Detection uses the hash matcher (fast, robust)
         # Make the logger smaller so the main window can fit controls
-        self.log_box = tk.Text(self, height=10, width=36, state="disabled", bg="#f5f5f5")
+        self.log_box = tk.Text(
+            self, height=10, width=36, state="disabled", bg="#f5f5f5"
+        )
         self.log_box.pack(padx=8, pady=(2, 0))
         # Hotkey configuration entry (toggle hotkey on its own row)
         top_frame = ttk.Frame(self)
@@ -509,6 +512,9 @@ class MainWindow(tk.Tk):
                         img, get_icon_dir(class_name, spec_name)
                     )
                     if detected_spell in mapping:
+                        print(
+                            f"Loop detected spell: {detected_spell} (score={score:.3f})"
+                        )
                         key = mapping[detected_spell]
                         press_key(key)
                         self._log(
@@ -522,6 +528,7 @@ class MainWindow(tk.Tk):
                     time.sleep(self.loop_interval)
             except Exception as e:
                 self._log(f"Loop error: {str(e)}")
+                print(traceback.format_exc())
             finally:
                 self._loop_running = False
                 self.loop_indicator_var.set("Loop: Off")

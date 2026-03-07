@@ -86,6 +86,11 @@ def press_key(key: str) -> None:
         "middle_click",
         "xbutton1",
         "xbutton2",
+        # accept common synonyms/tokens directly as well
+        "mouse4",
+        "mouse5",
+        "side1",
+        "side2",
         "mouse_down",
         "mouse_up",
     }
@@ -112,8 +117,14 @@ def press_key(key: str) -> None:
             key_tokens.append(base)
 
     try:
-        # pure simple key
-        if len(token_list) == 1 and token_list[0] not in MOUSE_ACTIONS:
+        print(
+            "key_tokens=%s mouse_tokens=%s first=%s",
+            key_tokens,
+            mouse_tokens,
+            token_list[0],
+        )
+        # pure simple key: single token that resolved to a keyboard token
+        if len(token_list) == 1 and len(key_tokens) == 1 and not mouse_tokens:
             pydirectinput.press(key_tokens[0])
             return
 
